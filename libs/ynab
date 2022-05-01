@@ -1,0 +1,64 @@
+#!/bin/sh
+set -e      # Abort upon error
+
+# Get budget ID from its name
+ynab_get_budget_id() {
+    ynab_api_call 'budgets' | while read budget; do
+        budget_name="$(echo "$budget" | jq -r '.name')"
+        budget_id="$(echo "$budget" | jq -r '.id')"
+
+        [ "$budget_name" = "$1" ] \
+            && echo "$budget_id" \
+            && break
+    done
+}
+
+# Get account ID from its name
+ynab_get_account_id() {
+    ynab_api_call "budgets/$1/accounts" | while read account; do
+        account_name="$(echo "$account" | jq -r '.name')"
+        account_id="$(echo "$account" | jq -r '.id')"
+
+        [ "$account_name" = "$2" ] \
+            && echo "$account_id" \
+            && break
+    done
+}
+
+# Add transaction
+# Args: (1) date, (2) payee, (3) category, (4) memo, (5) amount
+# Todo: error handling
+ynab_add_transaction() {
+    body="$(ynab_create_json "$1" "$2" "$3" "$4" "$5")"
+
+    curl -q -s \
+        -X POST \
+        -H "accept: application/json" \
+        -H "Authorization: Bearer $YNAB_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "$body" \
+        "$ynab_api_url/budgets/$ynab_budget_id/transactions" \
+        > /dev/null
+}
+
+# Create JSON object for transaction
+# Args: (1) date, (2) payee, (3) category, (4) memo, (5) amount
+ynab_create_json() {
+    jq -n '{ transaction: $ARGS.named }' \
+        --arg account_id "$ynab_account_id" \
+        --arg date "$1" \
+        --arg amount "$(echo "x=$5*1000; scale=0; x/1" | bc -l)" \
+        --arg payee_name "$2" \
+        --arg memo "$4" \
+        --arg cleared 'uncleared' \
+        -rc
+}
+
+# Make an API request to YNAB
+ynab_api_call() {
+    curl -q -s \
+        -H "Authorization: Bearer $YNAB_TOKEN" \
+        "$ynab_api_url/$1" \
+        | jq -r ".data.$(echo "$1" | rev | cut -d'/' -f1 | rev)" \
+        | jq -cr '.[]'
+}

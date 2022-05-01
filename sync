@@ -1,0 +1,51 @@
+#!/bin/sh
+set -e      # Abort upon error
+#set -x     # Print every command
+
+readonly SCRIPT_PATH="$(dirname `readlink -f "$0"`)"
+. "$SCRIPT_PATH/libs/ynab"
+. "$SCRIPT_PATH/libs/sb"
+. "$SCRIPT_PATH/libs/misc"
+
+# Loop through transactions from Sbanken
+# Ask to push them or not to YNAB
+main() {
+    # API urls
+    readonly sb_auth_url='https://auth.sbanken.no'
+    readonly sb_api_url='https://publicapi.sbanken.no/apibeta'
+    readonly ynab_api_url='https://api.youneedabudget.com/v1'
+
+    # Load config
+    [ -f "$SCRIPT_PATH/.env" ] || { err 'Error: Please configure your .env file'; return 1; }
+    set -a; . "$SCRIPT_PATH/.env"; set +a
+
+    # Authenticate
+    readonly sb_token="$(sb_get_token)"
+
+    # Fetch SB and YNAB accounts info
+    sb_account_id="$(sb_get_account_id "$SB_ACCOUNT_NAME")"
+    ynab_budget_id="$(ynab_get_budget_id "$YNAB_BUDGET_NAME")"
+    ynab_account_id="$(ynab_get_account_id "$ynab_budget_id" "$YNAB_ACCOUNT_NAME")"
+
+    # Main loop
+    sb_get_transactions "$sb_account_id" | while IFS=, read -r date payee category memo amount; do
+        # Skip first line
+        [ "$date" = 'date' ] && continue
+
+        # Print transaction from Sbanken
+        printf -- \
+            '- date:\t\t\t%s\n- payee:\t\t%s\n- category:\t\t\t%s\n- memo:\t\t\t%s\n- amount:\t\t%s\n' \
+            "$date" "$payee" "$category" "$memo" "$amount"
+        printf 'Push to YNAB? y/n: '
+
+        # Push it to YNAB?
+        add="$(readw | tr '[:upper:]' '[:lower:]')"
+        if [ "$add" = 'y' ] || [ "$add" = 'yes' ]; then
+            ynab_add_transaction  "$date" "$payee" "$category" "$memo" "$amount" \
+                && printf 'Pushed!\n' \
+                || printf 'Failed!\n'
+        fi
+    done
+}
+
+main "$@"; exit

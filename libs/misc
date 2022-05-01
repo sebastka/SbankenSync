@@ -1,0 +1,54 @@
+#!/bin/sh
+set -e      # Abort upon error
+#set -x     # Print every command
+
+# Thank you Stéphane (https://unix.stackexchange.com/a/678894)
+urlencode() {
+    LC_ALL=C awk -- \
+    '
+        BEGIN {
+            for (i = 1; i <= 255; i++) hex[sprintf("%c", i)] = sprintf("%%%02X", i)
+        }
+        function urlencode(s,  c,i,r,l) {
+            l = length(s)
+            for (i = 1; i <= l; i++) {
+                c = substr(s, i, 1)
+                r = r "" (c ~ /^[-._~0-9a-zA-Z]$/ ? c : hex[c])
+            }
+            return r
+        }
+        BEGIN {
+            for (i = 1; i < ARGC; i++)
+            print urlencode(ARGV[i])
+        }
+    ' "$@"
+}
+
+# Get user input (https://unix.stackexchange.com/a/223000)
+readw() {
+  printf "$(
+    # always read from the tty even when redirected:
+    exec < /dev/tty || exit # || exit only needed for bash
+
+    # save current tty settings:
+    tty_settings=$(stty -g) || exit
+
+    # schedule restore of the settings on exit of that subshell
+    # or on receiving SIGINT or SIGTERM:
+    trap 'stty "$tty_settings"' EXIT INT TERM
+
+    # read word as one line, record exit status
+    IFS= read -r word; ret=$?
+
+    # display a newline to visually acknowledge the entered word
+    echo > /dev/tty
+
+    # return the word for $REPLY
+    printf '%s\n' "$word"
+    exit "$ret"
+  )"
+}
+
+# Print error message to stderr
+# https://google.github.io/styleguide/shellguide.html
+err() { echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: $*" >&2; }

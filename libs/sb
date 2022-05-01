@@ -1,0 +1,66 @@
+#!/bin/sh
+set -e      # Abort upon error
+
+# Returns an auth token
+sb_get_token() {
+    curl -q -s \
+        -H 'Content-Type: application/x-www-form-urlencoded; charset=utf-8' \
+        -H 'Accept: application/json' \
+        -u "$SB_CLIENT_ID:$(urlencode "$SB_CLIENT_SECRET")" \
+        -d 'grant_type=client_credentials' \
+        "$sb_auth_url/IdentityServer/connect/token" \
+        | jq -r .access_token
+}
+
+# Get account ID from its name
+sb_get_account_id() {
+    sb_api_call 'Accounts' | while read account; do
+        account_name="$(echo "$account" | jq -r '.name')"
+        account_id="$(echo "$account" | jq -r '.accountId')"
+
+        [ "$account_name" = "$1" ] \
+            && echo "$account_id" \
+            && break
+    done
+}
+
+# Returns transactions as a CSV
+sb_get_transactions() {
+    printf 'date,payee,category,memo,amount\n'
+
+    sb_api_call "Transactions/archive/$1" | while read transaction; do
+        transaction_date="$(echo "$transaction" | jq -r '.interestDate' | tr -d ',')"
+        transaction_payee=''
+        transaction_category=''
+        transaction_memo="$(echo "$transaction" | jq -r '.text' | tr -d ',')"
+        transaction_amount="$(echo "$transaction" | jq -r '.amount' | tr -d ',')"
+
+        # Fetch info about card payment if they exist
+        has_card_details="$(echo "$transaction" | jq -r '.cardDetailsSpecified')"
+        if [ "$has_card_details" = 'true' ]; then
+            merchantCategoryDescription="$(echo "$transaction" | jq -cr '.cardDetails.merchantCategoryDescription' | tr -d ',')"
+
+            transaction_payee="$(echo "$transaction" | jq -r '.cardDetails.merchantName' | tr -d ',')"
+            transaction_date="$(echo "$transaction" | jq -r '.cardDetails.purchaseDate')"
+            transaction_memo="$transaction_memo - $merchantCategoryDescription"
+        fi
+
+        # Print csv line
+        printf '%s,%s,%s,%s,%s,%s\n' \
+            "$(echo "$transaction_date" | cut -d'T' -f1)" \
+            "$transaction_payee" \
+            "$transaction_category" \
+            "$transaction_memo" \
+            "$transaction_amount"
+    done
+}
+
+# Make an API request to Sbanken
+sb_api_call() {
+    curl -q -s \
+        -H "customerId: $SB_CUSTOMER_ID" \
+        -H "Authorization: Bearer $sb_token" \
+        "$sb_api_url/api/v2/$1" \
+        | jq -r '.items' \
+        | jq -cr '.[]'
+}
